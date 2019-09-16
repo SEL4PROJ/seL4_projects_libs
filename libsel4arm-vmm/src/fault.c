@@ -282,12 +282,11 @@ fault_t *fault_init(vm_t *vm)
     return fault;
 }
 
-int new_wfi_fault(fault_t *fault)
+static int new_fault_type(fault_t *fault, fault_type_t type)
 {
     int err;
     assert(fault_handled(fault));
-    fault->is_wfi = 1;
-    fault->is_prefetch = 0;
+    fault->type = type;
     fault->fsr = 0;
     fault->instruction = 0;
     fault->data = 0;
@@ -299,6 +298,16 @@ int new_wfi_fault(fault_t *fault)
     assert(!err);
 
     return err;
+}
+
+int new_smc_fault(fault_t *fault)
+{
+    return new_fault_type(fault, SMC);
+}
+
+int new_wfi_fault(fault_t *fault)
+{
+    return new_fault_type(fault, WFI);
 }
 
 int new_fault(fault_t *fault)
@@ -320,8 +329,7 @@ int new_fault(fault_t *fault)
     ip = seL4_GetMR(seL4_VMFault_IP);
     DFAULT("%s: New fault @ 0x%x from PC 0x%x\n", vm->name, addr, ip);
     /* Create the fault object */
-    fault->is_wfi = 0;
-    fault->is_prefetch = is_prefetch;
+    fault->type = is_prefetch ? PREFETCH : DATA;
     fault->ip = ip;
     fault->base_addr = fault->addr = addr;
     fault->fsr = fsr;
@@ -562,17 +570,22 @@ int fault_handled(fault_t *f)
 
 int fault_is_prefetch(fault_t *f)
 {
-    return f->is_prefetch;
+    return f->type == PREFETCH;
 }
 
 int fault_is_wfi(fault_t *f)
 {
-    return f->is_wfi;
+    return f->type == WFI;
+}
+
+int fault_is_smc(fault_t *f)
+{
+    return f->type == SMC;
 }
 
 int fault_is_32bit_instruction(fault_t *f)
 {
-    if (fault_is_wfi(f)) {
+    if (fault_is_wfi(f) || fault_is_smc(f)) {
         return !sel4arch_fault_is_thumb(f);
     }
     if (!HSR_IS_SYNDROME_VALID(f->fsr)) {
@@ -595,6 +608,9 @@ enum fault_width fault_get_width(fault_t *f)
                 break;
             case 2:
                 f->width = WIDTH_WORD;
+                break;
+            case 3:
+                f->width = WIDTH_DOUBLEWORD;
                 break;
             default:
                 print_fault(f);

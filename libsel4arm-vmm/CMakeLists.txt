@@ -40,12 +40,22 @@ file(
     GLOB
         sources
         src/*.c
-        src/arch/arm/*/*.c
         src/images/*.c
         src/devices/*.c
         src/plat/${KernelPlatform}/*/*.c
         src/sel4_arch/${KernelSel4Arch}/*.c
 )
+list(APPEND
+           sources
+           src/arch/arm/devices/vram.c
+)
+
+if(KernelPlatformImx8mq-evk)
+    list(APPEND sources src/arch/arm/devices/vgic_v3.c)
+else()
+    # currently every other supported core uses the gicv2.
+    list(APPEND sources src/arch/arm/devices/vgic_v2.c)
+endif()
 
 add_library(sel4arm-vmm STATIC EXCLUDE_FROM_ALL ${sources})
 target_include_directories(sel4arm-vmm PUBLIC include plat_include/${KernelPlatform})
