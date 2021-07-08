@@ -197,6 +197,50 @@ int make_guest_acpi_tables(vm_t *vm)
 
     // Could set up other tables here...
 
+    // DSDT
+    int dsdt_size = sizeof(acpi_dsdt_t);
+    acpi_dsdt_t *dsdt = calloc(1, dsdt_size);
+    assert(NULL != dsdt);
+
+    acpi_fill_table_head(&dsdt->header, "DSDT", 1);
+
+    dsdt->header.length = dsdt_size;
+    dsdt->header.checksum = acpi_calc_checksum((char *)dsdt, dsdt_size);
+
+    tables[num_tables] = dsdt;
+    table_sizes[num_tables] = dsdt_size;
+
+    int dsdt_index = num_tables;
+
+    num_tables++;
+
+    // FADT
+    int fadt_size = sizeof(acpi_fadt_t);
+    acpi_fadt_t *fadt = calloc(1, fadt_size);
+    assert(NULL != fadt);
+
+    acpi_fill_table_head(&fadt->header, "FACP", 1);
+
+    fadt->header.length = fadt_size;
+
+    /* Hardcode some necessary data; Addresses taken from QEMU.
+     * Info may vary on hardware platforms, but differences don't seem to affect
+     * the guest
+     */
+    fadt->pm1a_evt_blk = 0x600;
+    fadt->pm1_evt_len = 0x4;
+    fadt->pm1a_cnt_blk = 0x604;
+    fadt->pm1_cnt_len = 0x2;
+
+    fadt->sci_int = 9;
+
+    tables[num_tables] = fadt;
+    table_sizes[num_tables] = fadt_size;
+
+    int fadt_index = num_tables;
+
+    num_tables++;
+
     // XSDT
     size_t xsdt_size = sizeof(acpi_xsdt_t) + sizeof(uint64_t) * (num_tables - 1);
 
@@ -213,16 +257,19 @@ int make_guest_acpi_tables(vm_t *vm)
     }
 
     uintptr_t xsdt_addr = lower_bios_addr + (XSDT_START - LOWER_BIOS_START);
+    uintptr_t xsdt_vaddr = XSDT_START;
 
     acpi_xsdt_t *xsdt = calloc(1, xsdt_size);
     acpi_fill_table_head(&xsdt->header, "XSDT", 1);
 
     // Add previous tables to XSDT pointer list
     uintptr_t table_paddr = xsdt_addr + xsdt_size;
+    uintptr_t table_vaddr = xsdt_vaddr + xsdt_size;
     uint64_t *entry = (uint64_t *)((char *)xsdt + sizeof(acpi_xsdt_t));
     for (int i = 1; i < num_tables; i++) {
-        *entry++ = (uint64_t)table_paddr;
+        *entry++ = (uint64_t)table_vaddr;
         table_paddr += table_sizes[i];
+        table_vaddr += table_sizes[i];
     }
 
     xsdt->header.length = xsdt_size;
@@ -233,11 +280,21 @@ int make_guest_acpi_tables(vm_t *vm)
 
     // Copy all the tables to guest
     table_paddr = xsdt_addr;
+    table_vaddr = xsdt_vaddr;
     for (int i = 0; i < num_tables; i++) {
+
+        // Need to fill in DSDT address
+        if (i == fadt_index) {
+            fadt->dsdt_address = table_vaddr - table_sizes[dsdt_index];
+            fadt->x_dsdt_address = table_vaddr - table_sizes[dsdt_index];
+            fadt->header.checksum = acpi_calc_checksum((char *)fadt, fadt_size);
+        }
+
         ZF_LOGD("ACPI table \"%.4s\", addr = %p, size = %zu bytes\n",
-                (char *)tables[i], (void *)table_paddr, table_sizes[i]);
+                (char *)tables[i], (void *)table_vaddr, table_sizes[i]);
         memcpy((void *)table_paddr, (char *)tables[i], table_sizes[i]);
         table_paddr += table_sizes[i];
+        table_vaddr += table_sizes[i];
     }
 
     // RSDP
@@ -247,11 +304,11 @@ int make_guest_acpi_tables(vm_t *vm)
         .oem_id = "NICTA ",
         .revision = 2, /* ACPI v3*/
         .checksum = 0,
-        .rsdt_address = xsdt_addr,
+        .rsdt_address = xsdt_vaddr,
         /* rsdt_addrss will not be inspected as the xsdt is present.
            This is not ACPI 1 compliant */
         .length = sizeof(acpi_rsdp_t),
-        .xsdt_address = xsdt_addr,
+        .xsdt_address = xsdt_vaddr,
         .extended_checksum = 0,
         .reserved = {0}
     };

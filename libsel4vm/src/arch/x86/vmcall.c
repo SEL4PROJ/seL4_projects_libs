@@ -50,13 +50,13 @@ int vm_vmcall_handler(vm_vcpu_t *vcpu)
 {
     int res;
     vmcall_handler_t *h;
-    int token;
+    seL4_Word token;
     if (vm_get_thread_context_reg(vcpu, VCPU_CONTEXT_EAX, &token)) {
         return VM_EXIT_HANDLE_ERROR;
     }
-    h = get_handle(vcpu->vm, token);
+    h = get_handle(vcpu->vm, (int) token);
     if (h == NULL) {
-        ZF_LOGE("Failed to find handler for token:%x\n", token);
+        ZF_LOGE("Failed to find handler for token:%lx\n", token);
         vm_guest_exit_next_instruction(vcpu->vcpu_arch.guest_state, vcpu->vcpu.cptr);
         return VM_EXIT_HANDLED;
     }
